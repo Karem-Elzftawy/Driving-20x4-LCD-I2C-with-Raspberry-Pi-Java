@@ -1,0 +1,188 @@
+
+package sainsmart_lcd;
+
+import com.pi4j.io.i2c.I2CBus;
+import com.pi4j.io.i2c.I2CDevice;
+import com.pi4j.io.i2c.I2CFactory;
+import java.util.BitSet;
+
+//~--- JDK imports ------------------------------------------------------------
+
+import java.io.IOException;
+
+public class I2CLcdDisplay {
+    boolean             backLightDesiredState = true;
+    private boolean     backlight             = true;
+    boolean             rsFlag                = false; 
+    boolean             eFlag                 = false;
+    private static I2CDevice   dev                   = null;
+    //private final int[] LCD_LINE_ADDRESS      = {0x00, 0x40, 0x14, 0x54}; //Address for the 4 LCD Lines 
+    private final int[] LCD_LINE_ADDRESS      = {0x80, 0xC0, 0x94, 0xD4}; //Address for the 4 LCD Lines 
+
+    private final boolean LCD_CHR = true; //To decide sent data is data or command
+    private final static boolean LCD_CMD = false;
+
+    int         RS_PIN=0; //Pin of PCF8574 PORTB/A connected LCD RS pin
+    int         EN_PIN=2; //Pin of PCF8574 PORTB/A connected LCD E pin
+    int         D7_PIN=7;//Pin of PCF8574 PORTB/A connected LCD D7 pin
+    int         D6_PIN=6;//Pin of PCF8574  PORTB/A connected LCD D6 pin
+    int         D5_PIN=5;//Pin of PCF8574  PORTB/A connected LCD D5 pin
+    int         D4_PIN=4;//Pin of PCF8574 PORTB/A connected LCD D4 pin
+    int         RW_PIN=1;//Pin of PCF8574 PORTB/A connected LCD RW pin
+    int         backlightBit=3;//Pin of PCF8574 PORTB/A connected LCD backlightBit pin
+    
+	public static void main(String[] args) throws Exception{
+		System.out.println("Strting up the Sainsmart 20x4 LCD");
+        I2CBus bus = I2CFactory.getInstance(I2CBus.BUS_1); //
+
+        dev = bus.getDevice(0x27); //Address for PCF8574 change if A0,A1,A2 are connected to diff potenrial
+        
+        //dev.write(0x01, (byte) 0x00); //Initialized PORT B of MCP23017 to use as ouput.
+        
+		I2CLcdDisplay lcd= new I2CLcdDisplay();
+		
+		lcd.init(); //LCD Initialization Routine
+		lcd.setBacklight(true);  //LCD Backlight enable
+		lcd.lcd_byte(0x01, LCD_CMD); //LCD Clear Command
+		lcd.lcd_byte(0x02, LCD_CMD); //LCD Home Command
+		
+		while(true){
+			lcd.lcd_byte(0x01, LCD_CMD); //LCD Clear
+			lcd.setCursorPosition(0, 0);
+			lcd.write("Embedded");
+			Thread.sleep(2000);
+			
+			lcd.lcd_byte(0x01, LCD_CMD); //LCD Clear
+			lcd.setCursorPosition(1, 0);
+			lcd.write("Home Automation");
+			Thread.sleep(2000);
+			
+			lcd.lcd_byte(0x01, LCD_CMD); //LCD Clear
+			lcd.setCursorPosition(2, 0);
+			lcd.write("IOT");
+			Thread.sleep(2000);
+			
+			lcd.lcd_byte(0x01, LCD_CMD); //LCD Clear
+			lcd.setCursorPosition(3, 0);
+			lcd.write("Programming");
+			Thread.sleep(2000);
+		}
+	}
+	
+    public void write(byte data) { //Writes 1 Byte data to LCD
+        try {
+            lcd_byte(data, LCD_CHR);
+        } catch (Exception ex) {
+           ex.printStackTrace();
+        }
+    }
+
+    public void write(String data) {//Writes a string to LCD
+        for (int i = 0; i < data.length(); i++) {
+            try {
+                lcd_byte(data.charAt(i), LCD_CHR);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    public void lcd_byte(int val, boolean type) throws Exception { //Sets RS flag and send value to ports depending on DATA or COMMAND
+
+    	rsFlag=type;
+
+        write(val >> 4);
+        pulse_en(type, val >> 4);    // cmd or display data
+
+        write(val & 0x0f);
+        pulse_en(type, val & 0x0f);
+    }
+
+    public static BitSet fromByte(byte b) { //Convert a byte into Bitset
+        BitSet bits = new BitSet(8);
+
+        for (int i = 0; i < 8; i++) {
+            bits.set(i, (b & 1) == 1);
+            b >>= 1;
+        }
+
+        return bits;
+    }
+
+    private void init() throws Exception { //Initialization routine of LCD
+        lcd_byte(0x33, LCD_CMD);    // 4 bit
+        lcd_byte(0x32, LCD_CMD);    // 4 bit
+        lcd_byte(0x28, LCD_CMD);    // 4bit - 2 line
+        lcd_byte(0x08, LCD_CMD);    // don't shift, hide cursor
+        lcd_byte(0x01, LCD_CMD);    // clear and home display
+        lcd_byte(0x06, LCD_CMD);    // move cursor right
+        lcd_byte(0x0c, LCD_CMD);    // turn on
+    }
+
+    private void pulse_en(boolean type, int val) throws Exception {// Make the enable pin high and low to provide a pulse.
+        eFlag = true;
+        write(val);
+        eFlag =false;
+        write(val);
+
+        if (type == LCD_CMD) {
+            Thread.sleep(1);
+        }
+    }
+    private void write(int incomingData) throws Exception { // Arrange the respective bit of value to be send depending upon the pins the LCD is connected to.
+        int    tmpData = incomingData;
+        BitSet bits    = fromByte((byte) tmpData);
+        byte   out     = (byte) ((bits.get(3)
+                                  ? 1 << D7_PIN
+                                  : 0 << D7_PIN) | (bits.get(2)
+                ? 1 << D6_PIN
+                : 0 << D6_PIN) | (bits.get(1)
+                                 ? 1 << D5_PIN
+                                 : 0 << D5_PIN) | (bits.get(0)
+                ? 1 << D4_PIN
+                : 0 << D4_PIN) | (isBacklight()
+                                 ? 1 << backlightBit
+                                 : 0 << backlightBit) | (rsFlag
+
+                ? 1 << RS_PIN
+                : 0 << RS_PIN) | (eFlag
+                                 ? 1 << EN_PIN
+                                 : 0 << EN_PIN));
+
+        dev.write(0x13,out); //Set the value to PORT B register.
+    }
+
+    public void setCursorPosition(int row, int column) {
+
+        try {
+            lcd_byte(LCD_LINE_ADDRESS[row] + column, LCD_CMD);
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+    }
+     /**
+     * @param backlight the backlight to set
+     */
+    public void setBacklight(boolean backlight) {
+        this.backlight = backlight;
+    }
+     /**
+     * @param backlight the backlight to set
+     * @param immediate optionally update the device immediately
+     * @throws java.io.IOException
+     */
+    public void setBacklight(boolean backlight, boolean immediate) throws IOException {
+        setBacklight(backlight);
+        if(immediate) {
+            dev.write((byte) (backlight
+                    ? 1 << (byte) backlightBit
+                    : 0 << (byte) backlightBit));
+        }
+    }
+     /**
+     * @return the backlight
+     */
+    public boolean isBacklight() {
+        return backlight;
+    }
+}
